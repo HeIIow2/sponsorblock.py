@@ -38,6 +38,9 @@ def run():
 
     segments = client.get_skip_segments(video_id)
 
+    if len(segments) <= 0:
+        print("No Segments found for this Video.")
+
     for num, segment in enumerate(sorted(segments, key=lambda s: s.start)):
         name, color = COLORS[segment.category]
         if RICH_INSTALLED:

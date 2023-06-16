@@ -4,9 +4,10 @@ import os
 import secrets
 from datetime import timedelta
 from hashlib import sha256
-from typing import List, Union
+from typing import List, Union, Set
 
 import requests
+from requests.exceptions import ConnectionError
 
 from .errors import (
     BadRequest,
@@ -31,7 +32,7 @@ from .utils import (
 )
 
 
-def raise_request_exception(response: requests.Response):
+def raise_request_exception(response: requests.Response, ignore_codes: Set[int] = None):
     """
     If the server returns a status code, which is not 200,
     it needs to raise an exception:
@@ -43,8 +44,12 @@ def raise_request_exception(response: requests.Response):
     """
     code = response.status_code
 
+    ignore_codes = ignore_codes or set()
+    if code in ignore_codes:
+        return code
+
     if code == 200:
-        return
+        return code
 
     if code == 400:
         raise BadRequest("Your inputs are wrong/impossible", response)
@@ -134,6 +139,7 @@ class Client(metaclass=Singleton):
         categories: List[str] = None,
         required_segments: List[str] = None,
         service: str = "YouTube",
+        fail_silently: bool = False,
     ) -> List[Segment]:
         """Gets the skip segments for a given video.
 
@@ -149,6 +155,8 @@ class Client(metaclass=Singleton):
             A list of segment UUIDs to require be retrieved, even if they don't meet the minimum vote threshold.
         service : str
             The service to use, default is 'YouTube'. See https://wiki.sponsor.ajay.app/w/Types#service.
+        fail_silently : bool
+            If any exception is raised and this is True, it returns an empty list.
 
         Returns
         -------
@@ -206,14 +214,28 @@ class Client(metaclass=Singleton):
         response = self.session.get(url, params=parameters)
         try:
             data = json.loads(response.text)
+        except ConnectionError as e:
+            if fail_silently:
+                return []
+
+            raise e
+
         except json.JSONDecodeError as exc:
+            if fail_silently:
+                return []
+
+            # means it is not found?
             raise InvalidJSONException(
                 "The server returned invalid JSON", response
             ) from exc
+
         else:
+            # 404 means no results are found
+            if raise_request_exception(response, ignore_codes={404}) == 404:
+                return []
             return [Segment.from_dict(d) for d in data]
-        finally:
-            raise_request_exception(response)
+
+
 
     @cache(ttl=300)  # 5 minutes
     def get_skip_segments_with_hash(
